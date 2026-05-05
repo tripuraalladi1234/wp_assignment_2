@@ -2,11 +2,10 @@
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
 
-// Use the local MongoDB Express backend
-// Use environment variable for API base URL
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api'
 const API_URL = `${API_BASE_URL}/employees`
-
+const STORAGE_KEY = 'employee-management-records'
+const isStaticDeployment = window.location.hostname.endsWith('github.io')
 
 const employees = ref([])
 const employee = ref({
@@ -18,7 +17,50 @@ const employee = ref({
 const isEditing = ref(false)
 const editId = ref(null)
 
+const getStoredEmployees = () => {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []
+  } catch (error) {
+    console.error('Error reading saved employees:', error)
+    return []
+  }
+}
+
+const saveStoredEmployees = (records) => {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(records))
+}
+
+const createLocalEmployee = (payload) => {
+  const records = getStoredEmployees()
+  const nextId = records.length
+    ? Math.max(...records.map((record) => Number(record.id) || 0)) + 1
+    : 1
+  const newEmployee = { ...payload, id: String(nextId) }
+  const updatedRecords = [...records, newEmployee]
+  saveStoredEmployees(updatedRecords)
+  return updatedRecords
+}
+
+const updateLocalEmployee = (id, payload) => {
+  const updatedRecords = getStoredEmployees().map((record) =>
+    record.id === id ? { ...record, ...payload, id } : record
+  )
+  saveStoredEmployees(updatedRecords)
+  return updatedRecords
+}
+
+const deleteLocalEmployee = (id) => {
+  const updatedRecords = getStoredEmployees().filter((record) => record.id !== id)
+  saveStoredEmployees(updatedRecords)
+  return updatedRecords
+}
+
 const fetchEmployees = async () => {
+  if (isStaticDeployment) {
+    employees.value = getStoredEmployees()
+    return
+  }
+
   try {
     const response = await axios.get(API_URL)
     console.log('API Response:', response.data)
@@ -30,6 +72,16 @@ const fetchEmployees = async () => {
 
 const saveEmployee = async () => {
   try {
+    if (isStaticDeployment) {
+      employees.value = isEditing.value
+        ? updateLocalEmployee(editId.value, employee.value)
+        : createLocalEmployee(employee.value)
+      isEditing.value = false
+      editId.value = null
+      employee.value = { name: '', designation: '', department: '', salary: '' }
+      return
+    }
+
     if (isEditing.value) {
       await axios.put(`${API_URL}/${editId.value}`, employee.value)
       isEditing.value = false
@@ -56,6 +108,11 @@ const editEmployee = (emp) => {
 
 const deleteEmployee = async (id) => {
   if (confirm('Are you sure you want to delete this employee?')) {
+    if (isStaticDeployment) {
+      employees.value = deleteLocalEmployee(id)
+      return
+    }
+
     try {
       await axios.delete(`${API_URL}/${id}`)
       fetchEmployees()
